@@ -107,19 +107,17 @@ def answer_callback_query(callback_query_id, text=None):
         pass
 
 def find_flashscore_event_id(home_team, away_team):
-    """Flashscore მატჩის ID-ს პოვნა პირდაპირი ინდექსით"""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     }
 
     h_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19|1919|hnk)\b", "", home_team, flags=re.IGNORECASE).strip()
     a_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19|1919|hnk)\b", "", away_team, flags=re.IGNORECASE).strip()
 
-    # 1. Bing API / Search Fallback
-    query = f'site:flashscore.com/match/ {h_clean} {a_clean}'
+    query = f'flashscore "match" "{h_clean}" "{a_clean}"'
     try:
-        url_bing = f"https://www.bing.com/search?q={requests.utils.quote(query)}"
-        res = requests.get(url_bing, headers=headers, timeout=4)
+        url_ddg = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
+        res = requests.get(url_ddg, headers=headers, timeout=5)
         if res.status_code == 200:
             match_ids = re.findall(r"flashscore\.com/match/([a-zA-Z0-9]{8})", res.text)
             if match_ids:
@@ -127,11 +125,10 @@ def find_flashscore_event_id(home_team, away_team):
     except Exception:
         pass
 
-    # 2. Flashscore შიდა სერვისი
     try:
         q_term = h_clean.split()[0] if h_clean else home_team.split()[0]
         url_fs = f"https://search.flashscore.com/search/all?q={q_term}&l=1"
-        res2 = requests.get(url_fs, headers=headers, timeout=3)
+        res2 = requests.get(url_fs, headers=headers, timeout=4)
         if res2.status_code == 200:
             for item in res2.json().get("results", []):
                 if item.get("type") == "event":
@@ -259,13 +256,14 @@ def make_keyboard(fixture_id, status, fs_id=None, raw_home="", raw_away=""):
     ]
     keyboard = [row]
 
-    # აპლიკაციაში გარანტირებული გახსნა პირდაპირი ბმულით
+    # მობილურზე და კომპიუტერზე გარანტირებული პირდაპირი ბმული
     if fs_id:
         fs_url = f"https://www.flashscore.com/match/{fs_id}/"
     else:
         clean_h = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club)\b", "", raw_home, flags=re.IGNORECASE).strip()
         clean_a = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club)\b", "", raw_away, flags=re.IGNORECASE).strip()
-        fs_url = f"https://www.google.com/search?q={requests.utils.quote(f'site:flashscore.com {clean_h} {clean_a}')}&btnI"
+        search_terms = requests.utils.quote(f"{clean_h} vs {clean_a}")
+        fs_url = f"https://duckduckgo.com/?q=%5Csite%3Aflashscore.com+{search_terms}"
 
     keyboard.append([{"text": "🔗 Flashscore-ზე გახსნა", "url": fs_url}])
         
@@ -322,7 +320,6 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         kickoff = match_date[11:16]
         odds_str = get_match_odds(fixture_id)
 
-        # ID-ს მოძიება
         fs_id = find_flashscore_event_id(raw_home, raw_away)
 
         country_info = get_country_display(m['league'].get('country', ''))
