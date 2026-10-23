@@ -320,19 +320,49 @@ def parse_user_request(msg_text):
     text = msg_text.strip().lower()
     now_tbilisi = get_tbilisi_time()
 
-    if "ხვალ" in text:
-        target_date = (now_tbilisi + timedelta(days=1)).strftime("%Y-%m-%d")
-        return target_date, None, "ხვალინდელი"
+    # 1. ფორმატი: YYYY-MM-DD
+    iso_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", text)
+    if iso_match:
+        y, m, d = iso_match.groups()
+        t_date = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+        min_time = now_tbilisi.strftime("%H:%M") if t_date == now_tbilisi.strftime("%Y-%m-%d") else None
+        return t_date, min_time, t_date
 
-    target_date = now_tbilisi.strftime("%Y-%m-%d")
+    # 2. ფორმატი: DD.MM.YYYY ან DD.MM
+    dot_match = re.search(r"\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b", text)
+    if dot_match:
+        d, m, y = dot_match.groups()
+        year = int(y) if y else now_tbilisi.year
+        t_date = f"{year:04d}-{int(m):02d}-{int(d):02d}"
+        min_time = now_tbilisi.strftime("%H:%M") if t_date == now_tbilisi.strftime("%Y-%m-%d") else None
+        return t_date, min_time, t_date
+
+    # 3. ტექსტური მითითებები
+    if "ზეგ" in text:
+        t_date = (now_tbilisi + timedelta(days=2)).strftime("%Y-%m-%d")
+        return t_date, None, "ზეგინდელი"
+
+    days_ahead_match = re.search(r"(\d+)\s*დღ", text)
+    if days_ahead_match:
+        days = int(days_ahead_match.group(1))
+        t_date = (now_tbilisi + timedelta(days=days)).strftime("%Y-%m-%d")
+        return t_date, None, f"{days} დღის შემდეგ ({t_date})"
+
+    if "ხვალ" in text:
+        t_date = (now_tbilisi + timedelta(days=1)).strftime("%Y-%m-%d")
+        return t_date, None, "ხვალინდელი"
+
+    # ნაგულისხმევი: დღევანდელი დარჩენილი
+    t_date = now_tbilisi.strftime("%Y-%m-%d")
     current_time_str = now_tbilisi.strftime("%H:%M")
-    return target_date, current_time_str, f"დღევანდელი დარჩენილი ({current_time_str}-დან)"
+    return t_date, current_time_str, f"დღევანდელი დარჩენილი ({current_time_str}-დან)"
 
 def run_bot():
     last_update_id = None
     default_keyboard = {
         "keyboard": [
-            [{"text": "📅 დღევანდელი დარჩენილი"}, {"text": "⏭ ხვალინდელი თამაშები"}]
+            [{"text": "📅 დღევანდელი დარჩენილი"}, {"text": "⏭ ხვალინდელი თამაშები"}],
+            [{"text": "🗓 ზეგინდელი თამაშები"}]
         ],
         "resize_keyboard": True
     }
