@@ -48,14 +48,29 @@ DEFAULT_KEYBOARD = {
     "resize_keyboard": True
 }
 
-STAGE_GEO = {
-    "Round of 16": "1/8 ფინალი",
-    "8th Finals": "1/8 ფინალი",
-    "Quarter-finals": "მეოთხედფინალი",
-    "Semi-finals": "ნახევარფინალი",
-    "Final": "ფინალი",
-    "Finals": "ფინალი"
-}
+def parse_round_stage(round_str):
+    if not round_str:
+        return ""
+    r_lower = round_str.lower()
+    
+    stage = "თასი"
+    if "round of 16" in r_lower or "8th finals" in r_lower:
+        stage = "1/8 ფინალი"
+    elif "quarter-final" in r_lower or "quarterfinal" in r_lower:
+        stage = "მეოთხედფინალი"
+    elif "semi-final" in r_lower or "semifinal" in r_lower:
+        stage = "ნახევარფინალი"
+    elif "final" in r_lower:
+        stage = "ფინალი"
+
+    # პირველი და მეორე თამაშის ამოცნობა
+    leg_info = ""
+    if "1st leg" in r_lower or "leg 1" in r_lower:
+        leg_info = " (I მატჩი)"
+    elif "2nd leg" in r_lower or "leg 2" in r_lower:
+        leg_info = " (საპასუხო მატჩი)"
+
+    return f"{stage}{leg_info}"
 
 def get_tbilisi_time():
     utc_now = datetime.now(timezone.utc)
@@ -108,16 +123,16 @@ def answer_callback_query(callback_query_id, text=None):
 
 def find_flashscore_event_id(home_team, away_team):
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
     }
 
     h_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19|1919|hnk)\b", "", home_team, flags=re.IGNORECASE).strip()
     a_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19|1919|hnk)\b", "", away_team, flags=re.IGNORECASE).strip()
 
-    query = f'flashscore "match" "{h_clean}" "{a_clean}"'
+    query = f'flashscore "match" {h_clean} {a_clean}'
     try:
         url_ddg = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
-        res = requests.get(url_ddg, headers=headers, timeout=5)
+        res = requests.get(url_ddg, headers=headers, timeout=4)
         if res.status_code == 200:
             match_ids = re.findall(r"flashscore\.com/match/([a-zA-Z0-9]{8})", res.text)
             if match_ids:
@@ -256,16 +271,15 @@ def make_keyboard(fixture_id, status, fs_id=None, raw_home="", raw_away=""):
     ]
     keyboard = [row]
 
-    # მობილურზე და კომპიუტერზე გარანტირებული პირდაპირი ბმული
+    # აპლიკაციის პირდაპირი ბმული (Universal Link, რომელიც iPhone-ზე ხსნის Flashscore აპს)
     if fs_id:
-        fs_url = f"https://www.flashscore.com/match/{fs_id}/"
+        app_url = f"https://www.flashscore.com/match/{fs_id}/"
     else:
         clean_h = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club)\b", "", raw_home, flags=re.IGNORECASE).strip()
         clean_a = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club)\b", "", raw_away, flags=re.IGNORECASE).strip()
-        search_terms = requests.utils.quote(f"{clean_h} vs {clean_a}")
-        fs_url = f"https://duckduckgo.com/?q=%5Csite%3Aflashscore.com+{search_terms}"
+        app_url = f"https://www.flashscore.com/search/?q={requests.utils.quote(clean_h + ' ' + clean_a)}"
 
-    keyboard.append([{"text": "🔗 Flashscore-ზე გახსნა", "url": fs_url}])
+    keyboard.append([{"text": "📱 Flashscore-ში გახსნა", "url": app_url}])
         
     return {"inline_keyboard": keyboard}
 
@@ -316,7 +330,8 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         raw_league = m["league"].get("name", "")
         raw_round = m["league"].get("round", "")
 
-        round_display = STAGE_GEO.get(raw_round, raw_round)
+        # ეტაპისა და მატჩის რიგითობის ზუსტი ლოგიკა (1st Leg / 2nd Leg)
+        round_display = parse_round_stage(raw_round)
         kickoff = match_date[11:16]
         odds_str = get_match_odds(fixture_id)
 
