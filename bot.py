@@ -3,12 +3,10 @@ import re
 import time
 import html
 from datetime import datetime, timezone, timedelta
-from google import genai
 
 API_KEY = "a126d8e18f59628441ad42887c238103"
 TELEGRAM_BOT_TOKEN = "8861991818:AAGpvRwffowT-1csmJIjqioJ-BWsphjT4O0"
 ALLOWED_CHAT_ID = 6179352546
-GEMINI_API_KEY = "AQ.Ab8RN6LiCMr4azeZvFXWX46euNOHX9UbIRlYkgdJBCHZy_GA5Q"
 
 FLASHSCORE_AUTH = {
     "id": "638d0025a15efa96a54d5491",
@@ -18,8 +16,6 @@ FLASHSCORE_AUTH = {
 BASE_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 FLAG_DICT = {
     "world": "🌐", "international": "🌐", "spain": "🇪🇸", "brazil": "🇧🇷",
@@ -52,38 +48,18 @@ DEFAULT_KEYBOARD = {
     "resize_keyboard": True
 }
 
-TRANSLATION_CACHE = {
-    "Semi-finals": "ნახევარფინალი",
+STAGE_GEO = {
+    "Round of 16": "1/8 ფინალი",
+    "8th Finals": "1/8 ფინალი",
     "Quarter-finals": "მეოთხედფინალი",
+    "Semi-finals": "ნახევარფინალი",
     "Final": "ფინალი",
-    "Finals": "ფინალი",
-    "Round of 16": "1/8 ფინალი"
+    "Finals": "ფინალი"
 }
 
 def get_tbilisi_time():
     utc_now = datetime.now(timezone.utc)
     return utc_now + timedelta(hours=4)
-
-def translate_to_georgian(text):
-    if not text:
-        return ""
-    text_clean = text.strip()
-    if text_clean in TRANSLATION_CACHE:
-        return TRANSLATION_CACHE[text_clean]
-
-    try:
-        prompt = f"Translate or transliterate this team or league name to Georgian: {text_clean}. Output ONLY the Georgian word."
-        response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
-        res = response.text.strip().replace('"', '').replace("'", "")
-        if res:
-            TRANSLATION_CACHE[text_clean] = res
-            return res
-    except Exception:
-        pass
-    return text_clean
 
 def send_telegram(chat_id, text, reply_markup=None):
     url = f"{TELEGRAM_API_URL}/sendMessage"
@@ -131,13 +107,13 @@ def answer_callback_query(callback_query_id, text=None):
         pass
 
 def find_flashscore_event_id(home_team, away_team):
-    print(f"[FS SEARCH] Looking up Flashscore ID for: {home_team} vs {away_team}")
+    print(f"[FS SEARCH] Searching Flashscore for: {home_team} vs {away_team}")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
         "Accept": "*/*"
     }
 
-    # ვცდილობთ ორივე გუნდის სახელით მოძიებას
+    # ვეძებთ ორივე გუნდის სახელით
     queries = [home_team.split()[0], away_team.split()[0]]
     for q in queries:
         if not q or len(q) < 3:
@@ -153,17 +129,15 @@ def find_flashscore_event_id(home_team, away_team):
                     a_clean = away_team.lower()
                     if (h_clean in p1 or p1 in h_clean) and (a_clean in p2 or p2 in a_clean):
                         fs_id = item.get("id")
-                        print(f"[FS SEARCH] SUCCESS! Found ID: {fs_id}")
+                        print(f"[FS SEARCH SUCCESS] ID: {fs_id}")
                         return fs_id
         except Exception as e:
-            print(f"[FS SEARCH ERROR] Query '{q}': {e}")
+            print(f"[FS SEARCH ERROR] {e}")
             
-    print(f"[FS SEARCH FAILED] Could not find Flashscore ID for {home_team} vs {away_team}")
     return None
 
 def toggle_flashscore_favorite(fs_event_id, add=True):
     if not fs_event_id:
-        print("[FS SYNC] Skipped: No fs_event_id provided")
         return False
         
     url = "https://lsid.eu/v3/storemergeddata"
@@ -188,9 +162,9 @@ def toggle_flashscore_favorite(fs_event_id, add=True):
         "project": 2
     }
     try:
-        print(f"[FS SYNC] Sending payload to Flashscore API for ID: {fs_event_id} (Add={add})...")
+        print(f"[FS SYNC] Sending request for {fs_event_id} (add={add})")
         res = requests.post(url, headers=headers, json=payload, timeout=6)
-        print(f"[FS SYNC] Response status: {res.status_code}, Body: {res.text[:100]}")
+        print(f"[FS SYNC] Status: {res.status_code}")
         return res.status_code == 200
     except Exception as e:
         print(f"[FS SYNC ERROR] {e}")
@@ -326,32 +300,18 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         match_date = m["fixture"]["date"]
         raw_home = m["teams"]["home"]["name"]
         raw_away = m["teams"]["away"]["name"]
+        raw_league = m["league"].get("name", "")
+        raw_round = m["league"].get("round", "")
 
-        try:
-            league_geo = html.escape(translate_to_georgian(m["league"].get("name", "")))
-        except Exception:
-            league_geo = html.escape(m["league"].get("name", ""))
-
-        try:
-            round_geo = html.escape(translate_to_georgian(m["league"].get("round", "")))
-        except Exception:
-            round_geo = html.escape(m["league"].get("round", ""))
-
-        try:
-            home_geo = html.escape(translate_to_georgian(raw_home))
-            away_geo = html.escape(translate_to_georgian(raw_away))
-        except Exception:
-            home_geo = html.escape(raw_home)
-            away_geo = html.escape(raw_away)
-
+        round_display = STAGE_GEO.get(raw_round, raw_round)
         kickoff = match_date[11:16]
         odds_str = get_match_odds(fixture_id)
 
         country_info = get_country_display(m['league'].get('country', ''))
-        card = f"<b>#{idx} | {country_info} {league_geo}</b>\n"
-        card += f"⚽ <b>{home_geo} — {away_geo}</b>\n"
+        card = f"<b>#{idx} | {country_info} {html.escape(raw_league)}</b>\n"
+        card += f"⚽ <b>{html.escape(raw_home)} — {html.escape(raw_away)}</b>\n"
         card += f"⏰ <b>დაწყება:</b> {kickoff} (თბილისი)\n"
-        card += f"📍 <b>ეტაპი:</b> {round_geo}\n"
+        card += f"📍 <b>ეტაპი:</b> {html.escape(round_display)}\n"
         card += f"📊 <b>კოეფიციენტები:</b> {odds_str}\n"
 
         kb = make_keyboard(fixture_id, "none")
@@ -362,8 +322,8 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
                 "fixture_id": str(fixture_id),
                 "status": "none",
                 "match_date": match_date,
-                "teams": f"{home_geo} — {away_geo}",
-                "league": league_geo,
+                "teams": f"{raw_home} — {raw_away}",
+                "league": raw_league,
                 "raw_home": raw_home,
                 "raw_away": raw_away,
                 "fs_id": None
@@ -460,7 +420,6 @@ def run_bot():
                                     if msg_meta.get("fs_id"):
                                         fs_success = toggle_flashscore_favorite(msg_meta["fs_id"], add=True)
                                     
-                                    # თუ Flashscore-ზე ვერ დაემატა, შეტყობინება
                                     if not fs_success:
                                         send_telegram(chat_id, f"⚠️ Flashscore-ზე მატჩი ვერ მოიძებნა ან სინქრონიზაცია ვერ მოხერხდა: {msg_meta['teams']}")
 
