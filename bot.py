@@ -39,7 +39,6 @@ ORIGINAL_MESSAGES = {}
 REMINDERS = {}
 LAST_REMINDER_CHECK = 0
 IS_CANCELLED = False
-FLASHSCORE_CACHE = {}
 
 DEFAULT_KEYBOARD = {
     "keyboard": [
@@ -107,68 +106,45 @@ def answer_callback_query(callback_query_id, text=None):
     except Exception:
         pass
 
-def load_flashscore_feed_for_day(days_offset=0):
-    """Flashscore-ის Feed-იდან დღის მატჩების ID-ების ჩატვირთვა"""
-    global FLASHSCORE_CACHE
-    url = f"https://local-global.flashscore.ninja/2/x/feed/f_1_{days_offset}_3_en_1"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "x-fsign": "SW9D1eZo"
-    }
-    try:
-        r = requests.get(url, headers=headers, timeout=8)
-        if r.status_code == 200:
-            raw_data = r.text
-            blocks = raw_data.split("~AA÷")
-            for b in blocks[1:]:
-                parts = b.split("¬")
-                data_dict = {}
-                for p in parts:
-                    if "÷" in p:
-                        k, v = p.split("÷", 1)
-                        data_dict[k] = v
-                event_id = b.split("¬")[0]
-                home = data_dict.get("AE", "").lower()
-                away = data_dict.get("AF", "").lower()
-                if event_id and home and away:
-                    FLASHSCORE_CACHE[f"{home}_{away}"] = event_id
-            print(f"[FS FEED] Cached {len(FLASHSCORE_CACHE)} matches for offset {days_offset}")
-    except Exception as e:
-        print(f"[FS FEED ERROR] {e}")
-
 def find_flashscore_event_id(home_team, away_team):
-    """მოძიება Flashscore Cache-ში და საძიებო fallback"""
-    h_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19)\b", "", home_team, flags=re.IGNORECASE).strip().lower()
-    a_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19)\b", "", away_team, flags=re.IGNORECASE).strip().lower()
-
-    # 1. ვეძებთ ლოკალურ Cache-ში
-    for key, eid in FLASHSCORE_CACHE.items():
-        if (h_clean in key or key.startswith(h_clean[:4])) and (a_clean in key or a_clean[:4] in key):
-            print(f"[FS CACHE HIT] Found Event ID: {eid} for {home_team} vs {away_team}")
-            return eid
-
-    # 2. Fallback საძიებო მოთხოვნა
+    print(f"[FS SEARCH] Resolving via Search Engine: {home_team} vs {away_team}")
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "*/*"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
-    terms = [h_clean, a_clean, home_team.split()[0]]
-    for t in terms:
-        if not t or len(t) < 3:
-            continue
-        try:
-            url = f"https://search.flashscore.com/search/all?q={t}&l=1"
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                for item in res.json().get("results", []):
-                    if item.get("type") == "event":
-                        p1 = item.get("participant1_name", "").lower()
-                        p2 = item.get("participant2_name", "").lower()
-                        if (h_clean in p1 or p1 in h_clean) and (a_clean in p2 or p2 in a_clean):
-                            return item.get("id")
-        except Exception:
-            pass
-            
+
+    h_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19|1919|hnk)\b", "", home_team, flags=re.IGNORECASE).strip()
+    a_clean = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club|u20|u19|1919|hnk)\b", "", away_team, flags=re.IGNORECASE).strip()
+
+    query = f'site:flashscore.com/match/ "{h_clean}" "{a_clean}"'
+    
+    # 1. პირდაპირი ძებნა DuckDuckGo HTML-ით
+    try:
+        url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
+        res = requests.get(url, headers=headers, timeout=6)
+        if res.status_code == 200:
+            match_ids = re.findall(r"flashscore\.com/match/([a-zA-Z0-9]+)", res.text)
+            if match_ids:
+                fs_id = match_ids[0]
+                print(f"[FS SUCCESS] Found ID via Search: {fs_id}")
+                return fs_id
+    except Exception as e:
+        print(f"[FS SEARCH ERROR] {e}")
+
+    # 2. Flashscore API Fallback
+    try:
+        q_term = h_clean.split()[0] if h_clean else home_team.split()[0]
+        url_fs = f"https://search.flashscore.com/search/all?q={q_term}&l=1"
+        res2 = requests.get(url_fs, headers=headers, timeout=5)
+        if res2.status_code == 200:
+            for item in res2.json().get("results", []):
+                if item.get("type") == "event":
+                    p1 = item.get("participant1_name", "").lower()
+                    p2 = item.get("participant2_name", "").lower()
+                    if h_clean.lower() in p1 and a_clean.lower() in p2:
+                        return item.get("id")
+    except Exception:
+        pass
+
     return None
 
 def toggle_flashscore_favorite(fs_event_id, add=True):
@@ -230,6 +206,7 @@ def is_cup_stage_match(fixture):
     home_name = fixture.get("teams", {}).get("home", {}).get("name", "")
     away_name = fixture.get("teams", {}).get("away", {}).get("name", "")
 
+    # გამორიცხვა: ქალთა, სამოყვარულო, U19 და ქვემოთ (U20 დაშვებულია)
     exclude_patterns = [
         r"\bwomen\b", r"\bfemmes\b", r"\bfrauen\b", r"\bdonne\b", 
         r"\bfeminina\b", r"\bfemenil\b", r"\bwom\b", r"\(w\)",
@@ -296,15 +273,6 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
     global IS_CANCELLED
     IS_CANCELLED = False
 
-    # ვტვირთავთ Flashscore Feed-ს არჩეული დღისთვის
-    try:
-        t_dt = datetime.strptime(target_date, "%Y-%m-%d")
-        now_dt = get_tbilisi_time().replace(tzinfo=None, hour=0, minute=0, second=0, microsecond=0)
-        days_diff = (t_dt - now_dt).days
-        load_flashscore_feed_for_day(days_diff)
-    except Exception:
-        pass
-
     url = f"{BASE_URL}/fixtures"
     params = {"date": target_date, "timezone": "Asia/Tbilisi"}
     try:
@@ -352,9 +320,6 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         kickoff = match_date[11:16]
         odds_str = get_match_odds(fixture_id)
 
-        # ვეძებთ Flashscore ID-ს წინასწარ
-        fs_id = find_flashscore_event_id(raw_home, raw_away)
-
         country_info = get_country_display(m['league'].get('country', ''))
         card = f"<b>#{idx} | {country_info} {html.escape(raw_league)}</b>\n"
         card += f"⚽ <b>{html.escape(raw_home)} — {html.escape(raw_away)}</b>\n"
@@ -362,7 +327,7 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         card += f"📍 <b>ეტაპი:</b> {html.escape(round_display)}\n"
         card += f"📊 <b>კოეფიციენტები:</b> {odds_str}\n"
 
-        kb = make_keyboard(fixture_id, "none", fs_id)
+        kb = make_keyboard(fixture_id, "none")
         msg_id = send_telegram(chat_id, card, reply_markup=kb)
         if msg_id:
             ORIGINAL_MESSAGES[msg_id] = {
@@ -374,7 +339,7 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
                 "league": raw_league,
                 "raw_home": raw_home,
                 "raw_away": raw_away,
-                "fs_id": fs_id
+                "fs_id": None
             }
         time.sleep(0.3)
 
