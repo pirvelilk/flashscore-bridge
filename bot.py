@@ -131,33 +131,48 @@ def answer_callback_query(callback_query_id, text=None):
         pass
 
 def find_flashscore_event_id(home_team, away_team):
-    try:
-        search_term = home_team.split()[0] if home_team else ""
-        url = f"https://search.flashscore.com/search/all?q={search_term}&l=1"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        res = requests.get(url, headers=headers, timeout=6).json()
-        for item in res.get("results", []):
-            if item.get("type") == "event":
-                p1 = item.get("participant1_name", "").lower()
-                p2 = item.get("participant2_name", "").lower()
-                if (home_team.lower() in p1 or p1 in home_team.lower()) and (away_team.lower() in p2 or p2 in away_team.lower()):
-                    return item.get("id")
-    except Exception:
-        pass
+    print(f"[FS SEARCH] Looking up Flashscore ID for: {home_team} vs {away_team}")
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "*/*"
+    }
+
+    # ვცდილობთ ორივე გუნდის სახელით მოძიებას
+    queries = [home_team.split()[0], away_team.split()[0]]
+    for q in queries:
+        if not q or len(q) < 3:
+            continue
+        try:
+            url = f"https://search.flashscore.com/search/all?q={q}&l=1"
+            res = requests.get(url, headers=headers, timeout=6).json()
+            for item in res.get("results", []):
+                if item.get("type") == "event":
+                    p1 = item.get("participant1_name", "").lower()
+                    p2 = item.get("participant2_name", "").lower()
+                    h_clean = home_team.lower()
+                    a_clean = away_team.lower()
+                    if (h_clean in p1 or p1 in h_clean) and (a_clean in p2 or p2 in a_clean):
+                        fs_id = item.get("id")
+                        print(f"[FS SEARCH] SUCCESS! Found ID: {fs_id}")
+                        return fs_id
+        except Exception as e:
+            print(f"[FS SEARCH ERROR] Query '{q}': {e}")
+            
+    print(f"[FS SEARCH FAILED] Could not find Flashscore ID for {home_team} vs {away_team}")
     return None
 
 def toggle_flashscore_favorite(fs_event_id, add=True):
     if not fs_event_id:
+        print("[FS SYNC] Skipped: No fs_event_id provided")
         return False
+        
     url = "https://lsid.eu/v3/storemergeddata"
     headers = {
         "accept": "*/*",
         "content-type": "application/json",
         "origin": "https://www.flashscore.com",
         "referer": "https://www.flashscore.com/",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     }
     key_name = f"mygames.data.g_1_{fs_event_id}"
     now_ts = int(time.time())
@@ -173,9 +188,12 @@ def toggle_flashscore_favorite(fs_event_id, add=True):
         "project": 2
     }
     try:
+        print(f"[FS SYNC] Sending payload to Flashscore API for ID: {fs_event_id} (Add={add})...")
         res = requests.post(url, headers=headers, json=payload, timeout=6)
+        print(f"[FS SYNC] Response status: {res.status_code}, Body: {res.text[:100]}")
         return res.status_code == 200
-    except Exception:
+    except Exception as e:
+        print(f"[FS SYNC ERROR] {e}")
         return False
 
 def get_match_odds(fixture_id):
@@ -309,7 +327,6 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         raw_home = m["teams"]["home"]["name"]
         raw_away = m["teams"]["away"]["name"]
 
-        # უსაფრთხო თარგმნა: შეცდომისას გადადის პირდაპირ ინგლისურზე
         try:
             league_geo = html.escape(translate_to_georgian(m["league"].get("name", "")))
         except Exception:
@@ -438,8 +455,14 @@ def run_bot():
                                     new_status = "reviewed"
                                     if not msg_meta.get("fs_id"):
                                         msg_meta["fs_id"] = find_flashscore_event_id(msg_meta["raw_home"], msg_meta["raw_away"])
+                                    
+                                    fs_success = False
                                     if msg_meta.get("fs_id"):
-                                        toggle_flashscore_favorite(msg_meta["fs_id"], add=True)
+                                        fs_success = toggle_flashscore_favorite(msg_meta["fs_id"], add=True)
+                                    
+                                    # თუ Flashscore-ზე ვერ დაემატა, შეტყობინება
+                                    if not fs_success:
+                                        send_telegram(chat_id, f"⚠️ Flashscore-ზე მატჩი ვერ მოიძებნა ან სინქრონიზაცია ვერ მოხერხდა: {msg_meta['teams']}")
 
                                     if msg_meta.get("match_date"):
                                         dt_clean = msg_meta["match_date"][:19]
