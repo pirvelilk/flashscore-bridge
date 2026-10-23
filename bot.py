@@ -26,7 +26,7 @@ FLAG_DICT = {
     "portugal": "🇵🇹", "argentina": "🇦🇷", "finland": "🇫🇮", "paraguay": "🇵🇾",
     "georgia": "🇬🇪", "bolivia": "🇧🇴", "albania": "🇦🇱", "wales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿", "serbia": "🇷🇸",
     "australia": "🇦🇺", "malaysia": "🇲🇾", "uruguay": "🇺🇾", "mexico": "🇲🇽",
-    "chile": "🇨🇱", "peru": "🇵🇪", "ecuador": "🇪🇨", "venezuela": "🇻🇪"
+    "chile": "🇨🇱", "peru": "🇵🇪", "ecuador": "🇪🇨", "venezuela": "🇻🇪", "south-africa": "🇿🇦"
 }
 
 def get_country_display(country_name):
@@ -92,7 +92,7 @@ def edit_message_text_and_markup(chat_id, message_id, text, reply_markup):
         "reply_markup": reply_markup
     }
     try:
-        requests.post(url, json=payload, timeout=6)
+        requests.post(url, json=payload, timeout=4)
     except Exception:
         pass
 
@@ -102,12 +102,11 @@ def answer_callback_query(callback_query_id, text=None):
     if text:
         payload["text"] = text
     try:
-        requests.post(url, json=payload, timeout=4)
+        requests.post(url, json=payload, timeout=3)
     except Exception:
         pass
 
 def find_flashscore_event_id(home_team, away_team):
-    print(f"[FS SEARCH] Resolving via Search Engine: {home_team} vs {away_team}")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     }
@@ -117,24 +116,20 @@ def find_flashscore_event_id(home_team, away_team):
 
     query = f'site:flashscore.com/match/ "{h_clean}" "{a_clean}"'
     
-    # 1. პირდაპირი ძებნა DuckDuckGo HTML-ით
     try:
         url = f"https://html.duckduckgo.com/html/?q={requests.utils.quote(query)}"
-        res = requests.get(url, headers=headers, timeout=6)
+        res = requests.get(url, headers=headers, timeout=4)
         if res.status_code == 200:
             match_ids = re.findall(r"flashscore\.com/match/([a-zA-Z0-9]+)", res.text)
             if match_ids:
-                fs_id = match_ids[0]
-                print(f"[FS SUCCESS] Found ID via Search: {fs_id}")
-                return fs_id
-    except Exception as e:
-        print(f"[FS SEARCH ERROR] {e}")
+                return match_ids[0]
+    except Exception:
+        pass
 
-    # 2. Flashscore API Fallback
     try:
         q_term = h_clean.split()[0] if h_clean else home_team.split()[0]
         url_fs = f"https://search.flashscore.com/search/all?q={q_term}&l=1"
-        res2 = requests.get(url_fs, headers=headers, timeout=5)
+        res2 = requests.get(url_fs, headers=headers, timeout=3)
         if res2.status_code == 200:
             for item in res2.json().get("results", []):
                 if item.get("type") == "event":
@@ -173,11 +168,9 @@ def toggle_flashscore_favorite(fs_event_id, add=True):
         "project": 2
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=6)
-        print(f"[FS SYNC] Event: {fs_event_id} | Add: {add} | Status: {res.status_code}")
+        res = requests.post(url, headers=headers, json=payload, timeout=4)
         return res.status_code == 200
-    except Exception as e:
-        print(f"[FS SYNC ERROR] {e}")
+    except Exception:
         return False
 
 def get_match_odds(fixture_id):
@@ -206,7 +199,6 @@ def is_cup_stage_match(fixture):
     home_name = fixture.get("teams", {}).get("home", {}).get("name", "")
     away_name = fixture.get("teams", {}).get("away", {}).get("name", "")
 
-    # გამორიცხვა: ქალთა, სამოყვარულო, U19 და ქვემოთ (U20 დაშვებულია)
     exclude_patterns = [
         r"\bwomen\b", r"\bfemmes\b", r"\bfrauen\b", r"\bdonne\b", 
         r"\bfeminina\b", r"\bfemenil\b", r"\bwom\b", r"\(w\)",
@@ -255,7 +247,7 @@ def check_and_send_reminders():
         elif diff_minutes < 0:
             REMINDERS.pop(fix_id, None)
 
-def make_keyboard(fixture_id, status, fs_id=None):
+def make_keyboard(fixture_id, status, fs_id=None, raw_home="", raw_away=""):
     rev_text = "✅ განხილულია" if status == "reviewed" else "⬜ განხილვა"
     ign_text = "↩️ დაბრუნება" if status == "ignored" else "❌ არ განვიხილავ"
     
@@ -264,8 +256,17 @@ def make_keyboard(fixture_id, status, fs_id=None):
         {"text": ign_text, "callback_data": f"cup_ign_{fixture_id}"}
     ]
     keyboard = [row]
+
+    # თუ პირდაპირი ID არის, ხსნის პირდაპირ მატჩს; თუ არა, ხსნის Flashscore-ის ზუსტ ძებნას
     if fs_id:
-        keyboard.append([{"text": "🔗 Flashscore-ზე გახსნა", "url": f"https://www.flashscore.com/match/{fs_id}/"}])
+        fs_url = f"https://www.flashscore.com/match/{fs_id}/"
+    else:
+        clean_h = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club)\b", "", raw_home, flags=re.IGNORECASE).strip()
+        clean_a = re.sub(r"\b(fc|cf|fk|sc|ac|cd|as|afc|club)\b", "", raw_away, flags=re.IGNORECASE).strip()
+        search_query = requests.utils.quote(f"{clean_h} {clean_a}".strip())
+        fs_url = f"https://www.flashscore.com/search/?q={search_query}"
+
+    keyboard.append([{"text": "🔗 Flashscore-ზე გახსნა", "url": fs_url}])
         
     return {"inline_keyboard": keyboard}
 
@@ -320,6 +321,9 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         kickoff = match_date[11:16]
         odds_str = get_match_odds(fixture_id)
 
+        # Flashscore ID-ის მცდელობა
+        fs_id = find_flashscore_event_id(raw_home, raw_away)
+
         country_info = get_country_display(m['league'].get('country', ''))
         card = f"<b>#{idx} | {country_info} {html.escape(raw_league)}</b>\n"
         card += f"⚽ <b>{html.escape(raw_home)} — {html.escape(raw_away)}</b>\n"
@@ -327,7 +331,7 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
         card += f"📍 <b>ეტაპი:</b> {html.escape(round_display)}\n"
         card += f"📊 <b>კოეფიციენტები:</b> {odds_str}\n"
 
-        kb = make_keyboard(fixture_id, "none")
+        kb = make_keyboard(fixture_id, "none", fs_id, raw_home, raw_away)
         msg_id = send_telegram(chat_id, card, reply_markup=kb)
         if msg_id:
             ORIGINAL_MESSAGES[msg_id] = {
@@ -339,7 +343,7 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str):
                 "league": raw_league,
                 "raw_home": raw_home,
                 "raw_away": raw_away,
-                "fs_id": None
+                "fs_id": fs_id
             }
         time.sleep(0.3)
 
@@ -417,6 +421,8 @@ def run_bot():
                         if msg_meta:
                             current_status = msg_meta["status"]
                             clean_text = msg_meta["clean_text"]
+                            raw_h = msg_meta["raw_home"]
+                            raw_a = msg_meta["raw_away"]
 
                             if action == "rev":
                                 if current_status == "reviewed":
@@ -426,8 +432,13 @@ def run_bot():
                                         toggle_flashscore_favorite(msg_meta["fs_id"], add=False)
                                 else:
                                     new_status = "reviewed"
+                                    # მყისიერი ვიზუალური ცვლილება
+                                    msg_meta["status"] = new_status
+                                    new_kb = make_keyboard(fix_id, new_status, msg_meta.get("fs_id"), raw_h, raw_a)
+                                    edit_message_text_and_markup(chat_id, msg_id, clean_text, new_kb)
+
                                     if not msg_meta.get("fs_id"):
-                                        msg_meta["fs_id"] = find_flashscore_event_id(msg_meta["raw_home"], msg_meta["raw_away"])
+                                        msg_meta["fs_id"] = find_flashscore_event_id(raw_h, raw_a)
                                     
                                     fs_id = msg_meta.get("fs_id")
                                     fs_success = False
@@ -436,10 +447,6 @@ def run_bot():
                                     
                                     if fs_success:
                                         send_telegram(chat_id, f"⭐️ <b>Flashscore-ზე დაემატა:</b> {msg_meta['teams']}", reply_markup=DEFAULT_KEYBOARD)
-                                    else:
-                                        search_q = requests.utils.quote(f"{msg_meta['raw_home']} {msg_meta['raw_away']}")
-                                        fs_search_url = f"https://www.flashscore.com/search/?q={search_q}"
-                                        send_telegram(chat_id, f"ℹ️ <b>Flashscore ბმული:</b> <a href='{fs_search_url}'>{msg_meta['teams']}</a>", reply_markup=DEFAULT_KEYBOARD)
 
                                     if msg_meta.get("match_date"):
                                         dt_clean = msg_meta["match_date"][:19]
@@ -451,9 +458,8 @@ def run_bot():
                                             "chat_id": chat_id,
                                             "sent": False
                                         }
-                                
-                                msg_meta["status"] = new_status
-                                new_kb = make_keyboard(fix_id, new_status, msg_meta.get("fs_id"))
+
+                                new_kb = make_keyboard(fix_id, new_status, msg_meta.get("fs_id"), raw_h, raw_a)
                                 edit_message_text_and_markup(chat_id, msg_id, clean_text, new_kb)
 
                             elif action == "ign":
@@ -469,7 +475,7 @@ def run_bot():
                                     updated_text = "\n".join([f"<s>{l}</s>" if l.strip() else "" for l in lines])
 
                                 msg_meta["status"] = new_status
-                                new_kb = make_keyboard(fix_id, new_status, msg_meta.get("fs_id"))
+                                new_kb = make_keyboard(fix_id, new_status, msg_meta.get("fs_id"), raw_h, raw_a)
                                 edit_message_text_and_markup(chat_id, msg_id, updated_text, new_kb)
                     continue
 
