@@ -44,6 +44,14 @@ REMINDERS = {}
 LAST_REMINDER_CHECK = 0
 IS_CANCELLED = False
 
+DEFAULT_KEYBOARD = {
+    "keyboard": [
+        [{"text": "📅 დღევანდელი დარჩენილი"}, {"text": "⏭ ხვალინდელი თამაშები"}],
+        [{"text": "🗓 ზეგინდელი თამაშები"}, {"text": "🛑 სდექ"}]
+    ],
+    "resize_keyboard": True
+}
+
 TRANSLATION_CACHE = {
     "Semi-finals": "ნახევარფინალი",
     "Quarter-finals": "მეოთხედფინალი",
@@ -63,11 +71,8 @@ def translate_to_georgian(text):
     if text_clean in TRANSLATION_CACHE:
         return TRANSLATION_CACHE[text_clean]
 
-    prompt = (
-        f"Translate or transliterate this football team/league name to natural Georgian: {text_clean}. "
-        f"Output ONLY Georgian text."
-    )
     try:
+        prompt = f"Translate or transliterate this team or league name to Georgian: {text_clean}. Output ONLY the Georgian word."
         response = ai_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=prompt
@@ -177,7 +182,7 @@ def get_match_odds(fixture_id):
     try:
         url_odds = f"{BASE_URL}/odds"
         p = {"fixture": fixture_id}
-        res = requests.get(url_odds, headers=HEADERS, params=p, timeout=5).json()
+        res = requests.get(url_odds, headers=HEADERS, params=p, timeout=4).json()
         data = res.get("response", [])
         if data and data[0].get("bookmakers"):
             for b in data[0]["bookmakers"]:
@@ -242,7 +247,7 @@ def check_and_send_reminders():
                 f"⚽ <b>{html.escape(r['teams'])}</b>\n"
                 f"🏆 <b>{html.escape(r['league'])}</b>"
             )
-            send_telegram(r["chat_id"], msg)
+            send_telegram(r["chat_id"], msg, reply_markup=DEFAULT_KEYBOARD)
             r["sent"] = True
         elif diff_minutes < 0:
             REMINDERS.pop(fix_id, None)
@@ -259,7 +264,7 @@ def make_keyboard(fixture_id, status):
         ]
     }
 
-def send_cup_matches_for_date(chat_id, target_date, min_time_str, default_keyboard):
+def send_cup_matches_for_date(chat_id, target_date, min_time_str):
     global IS_CANCELLED
     IS_CANCELLED = False
 
@@ -268,7 +273,7 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str, default_keyboa
     try:
         res = requests.get(url, headers=HEADERS, params=params, timeout=12).json()
     except Exception as e:
-        send_telegram(chat_id, f"API შეცდომა: {html.escape(str(e))}", reply_markup=default_keyboard)
+        send_telegram(chat_id, f"API შეცდომა: {html.escape(str(e))}", reply_markup=DEFAULT_KEYBOARD)
         return
         
     matches = res.get("response", [])
@@ -284,18 +289,18 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str, default_keyboa
 
     if not cup_matches:
         msg = f"📅 <b>თარიღი: {target_date} (თბილისი)</b>\n\nმერვედფინალიდან ფინალის ჩათვლით მატჩები არ მოიძებნა."
-        send_telegram(chat_id, msg, reply_markup=default_keyboard)
+        send_telegram(chat_id, msg, reply_markup=DEFAULT_KEYBOARD)
         return
 
     header_text = (
         f"🏆 <b>სათასო ფილტრი (1/8-დან ფინალამდე): {target_date}</b>\n"
         f"⚽ ნაპოვნია <b>{len(cup_matches)}</b> მატჩი:\n"
     )
-    send_telegram(chat_id, header_text)
+    send_telegram(chat_id, header_text, reply_markup=DEFAULT_KEYBOARD)
 
     for idx, m in enumerate(cup_matches, 1):
         if IS_CANCELLED:
-            send_telegram(chat_id, "🛑 <b>გაგზავნა შეჩერებულია.</b>", reply_markup=default_keyboard)
+            send_telegram(chat_id, "🛑 <b>გაგზავნა შეჩერებულია.</b>", reply_markup=DEFAULT_KEYBOARD)
             IS_CANCELLED = False
             return
 
@@ -304,10 +309,24 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str, default_keyboa
         raw_home = m["teams"]["home"]["name"]
         raw_away = m["teams"]["away"]["name"]
 
-        league_geo = html.escape(translate_to_georgian(m["league"].get("name", "")))
-        round_geo = html.escape(translate_to_georgian(m["league"].get("round", "")))
-        home_geo = html.escape(translate_to_georgian(raw_home))
-        away_geo = html.escape(translate_to_georgian(raw_away))
+        # უსაფრთხო თარგმნა: შეცდომისას გადადის პირდაპირ ინგლისურზე
+        try:
+            league_geo = html.escape(translate_to_georgian(m["league"].get("name", "")))
+        except Exception:
+            league_geo = html.escape(m["league"].get("name", ""))
+
+        try:
+            round_geo = html.escape(translate_to_georgian(m["league"].get("round", "")))
+        except Exception:
+            round_geo = html.escape(m["league"].get("round", ""))
+
+        try:
+            home_geo = html.escape(translate_to_georgian(raw_home))
+            away_geo = html.escape(translate_to_georgian(raw_away))
+        except Exception:
+            home_geo = html.escape(raw_home)
+            away_geo = html.escape(raw_away)
+
         kickoff = match_date[11:16]
         odds_str = get_match_odds(fixture_id)
 
@@ -332,9 +351,9 @@ def send_cup_matches_for_date(chat_id, target_date, min_time_str, default_keyboa
                 "raw_away": raw_away,
                 "fs_id": None
             }
-        time.sleep(0.4)
+        time.sleep(0.3)
 
-    send_telegram(chat_id, "✅ სია დასრულებულია.", reply_markup=default_keyboard)
+    send_telegram(chat_id, "✅ სია დასრულებულია.", reply_markup=DEFAULT_KEYBOARD)
 
 def parse_user_request(msg_text):
     text = msg_text.strip().lower()
@@ -376,13 +395,6 @@ def parse_user_request(msg_text):
 def run_bot():
     global IS_CANCELLED
     last_update_id = None
-    default_keyboard = {
-        "keyboard": [
-            [{"text": "📅 დღევანდელი დარჩენილი"}, {"text": "⏭ ხვალინდელი თამაშები"}],
-            [{"text": "🗓 ზეგინდელი თამაშები"}, {"text": "🛑 სდექ"}]
-        ],
-        "resize_keyboard": True
-    }
 
     while True:
         try:
@@ -472,12 +484,12 @@ def run_bot():
                 text = msg.get("text", "").strip()
                 if text.lower() in ["სდექ", "stop", "🛑 სდექ"]:
                     IS_CANCELLED = True
-                    send_telegram(chat_id, "🛑 პროცესი შეჩერებულია.", reply_markup=default_keyboard)
+                    send_telegram(chat_id, "🛑 პროცესი შეჩერებულია.", reply_markup=DEFAULT_KEYBOARD)
                     continue
 
                 target_date, min_time, date_label = parse_user_request(text)
-                send_telegram(chat_id, f"⏳ იფილტრება სათასო მატჩები ({date_label}), გთხოვთ დაელოდოთ...")
-                send_cup_matches_for_date(chat_id, target_date, min_time, default_keyboard)
+                send_telegram(chat_id, f"⏳ იფილტრება სათასო მატჩები ({date_label}), გთხოვთ დაელოდოთ...", reply_markup=DEFAULT_KEYBOARD)
+                send_cup_matches_for_date(chat_id, target_date, min_time)
 
         except Exception:
             pass
